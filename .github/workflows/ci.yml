@@ -4,6 +4,7 @@ name: ci
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -153,6 +154,9 @@ jobs:
           mkdir -p stage dist
           cmake --install build --config Release --prefix stage
           ditto -c -k --keepParent stage/obs-hyperhdr.plugin dist/obs-hyperhdr-macos-universal.zip
+          dsymutil "build/obs-hyperhdr.plugin/Contents/MacOS/obs-hyperhdr" -o dist/obs-hyperhdr-macos-universal.dSYM
+          ditto -c -k --keepParent dist/obs-hyperhdr-macos-universal.dSYM dist/obs-hyperhdr-macos-universal-dSYM.zip
+          rm -rf dist/obs-hyperhdr-macos-universal.dSYM
 
       - uses: actions/upload-artifact@v4
         with:
@@ -196,11 +200,12 @@ jobs:
 
       - name: Configure plugin
         run: |
-          # w32-pthreads config exists only in the libobs build tree.
+          # CMake reads backslashes in -D values as escapes, so pass forward-slash paths.
+          $root = (Get-Location).Path -replace '\\', '/'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-deps" `
-            -Dw32-pthreads_DIR="$PWD/obs-studio/build/deps/w32-pthreads" `
-            -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
+            -DCMAKE_PREFIX_PATH="$root/obs-studio/build/libobs;$root/obs-deps" `
+            -Dw32-pthreads_DIR="$root/obs-studio/build/deps/w32-pthreads" `
+            -DCMAKE_MODULE_PATH="$root/obs-studio/cmake/finders"
 
       - name: Build
         run: cmake --build build --config RelWithDebInfo
@@ -217,6 +222,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path stage, dist | Out-Null
           cmake --install build --config RelWithDebInfo --prefix stage
           Compress-Archive -Path stage/obs-hyperhdr -DestinationPath dist/obs-hyperhdr-windows-x64.zip
+          Compress-Archive -Path build/RelWithDebInfo/obs-hyperhdr.pdb -DestinationPath dist/obs-hyperhdr-windows-x64-pdb.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -270,3 +276,48 @@ jobs:
           fi
 
           gh release upload dev dist/* --clobber
+
+  tag-release:
+    name: draft release ${{ github.ref_name }}
+    needs: [linux, macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Check tag matches plugin version
+        run: |
+          set -euo pipefail
+          plugin_ver=$(grep -oP '^project\(obs-hyperhdr VERSION \K[0-9.]+' CMakeLists.txt)
+          tag_ver=${GITHUB_REF_NAME#v}
+          if [[ "${tag_ver%%-*}" != "$plugin_ver" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match project version ${plugin_ver}"
+            exit 1
+          fi
+
+      - name: Add source tarball and checksums
+        run: |
+          set -euo pipefail
+          ver=${GITHUB_REF_NAME#v}
+          git archive --format=tar.gz --prefix="obs-hyperhdr-${ver}/" \
+            -o "dist/obs-hyperhdr-${ver}-source.tar.gz" "$GITHUB_SHA"
+          cd dist
+          sha256sum ./* > CHECKSUMS.txt
+
+      - name: Create draft release
+        run: |
+          set -euo pipefail
+          pre=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
+            --title "obs-hyperhdr $GITHUB_REF_NAME" --generate-notes "${pre[@]}"
