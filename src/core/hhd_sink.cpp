@@ -15,10 +15,11 @@ namespace {
 
 constexpr int kBackoffStartMs = 250;
 constexpr int kBackoffCapMs = 2000;
-constexpr int kConnectTimeoutMs = 1000;
-constexpr int kWriteTimeoutMs = 1000;
-constexpr int kStopConnectTimeoutMs = 200;
-constexpr int kStopWriteTimeoutMs = 200;
+// Worst-case stop: one in-flight operation + teardown connect + Clear = 300 + 100 + 100 ms.
+constexpr int kConnectTimeoutMs = 300;
+constexpr int kWriteTimeoutMs = 300;
+constexpr int kStopConnectTimeoutMs = 100;
+constexpr int kStopWriteTimeoutMs = 100;
 constexpr int kIdleTickMs = 4;
 constexpr double kMaxFpsCap = 60.0;
 
