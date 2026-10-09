@@ -68,7 +68,7 @@ endif()
 #   macOS:          obs-hyperhdr.plugin           -> <plugins>/
 #   Linux/Windows:  obs-hyperhdr/bin/64bit/<lib>  -> <plugins>/
 if(APPLE)
-  install(TARGETS ${PROJECT_NAME} BUNDLE DESTINATION .)
+  install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION . BUNDLE DESTINATION .)
 else()
   install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION ${PROJECT_NAME}/bin/64bit
