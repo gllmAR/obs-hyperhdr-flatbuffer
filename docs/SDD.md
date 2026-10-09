@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft for review. Design only. No implementation has started. |
+| Status | Implemented through Phase 5 (core, main output, filter, settings UI). Phase 6 hardening and Phase 7 packaging in progress. See README for the verified scope. |
 | Owner | Project owner (see Q-1 for license ownership) |
 | Repository | `github.com/gllmAR/obs-hyperhdr-flatbuffer` |
 | Targets | OBS Studio 32.2.2 (pinned in CI, obs-deps 2026-07-15). HyperHDR with the FlatBuffers server (TCP 19400 or domain socket). |

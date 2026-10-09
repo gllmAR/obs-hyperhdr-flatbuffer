@@ -31,7 +31,7 @@ The protocol core, sink, and transport need no OBS install. Run their tests with
 - macOS: `brew install ninja`, then the same three commands with `core-macos`
 - Windows (Visual Studio 2022): `cmake --preset core-windows`, `cmake --build --preset core-windows`, `ctest --preset core-windows`
 
-CI runs the same presets on macOS (`core-macos`) and the equivalent commands on Linux and Windows. The plugin itself needs a libobs build tree; pass its location with `-DCMAKE_PREFIX_PATH` or `libobs_DIR` in a `CMakeUserPresets.json`.
+CI runs the same presets on macOS (`core-macos`) and the equivalent commands on Linux and Windows. The plugin also needs `obs-frontend-api`: point `libobs_DIR` at `<obs-build>/libobs` and `obs-frontend-api_DIR` at `<obs-build>/frontend/api` (or add both to `CMAKE_PREFIX_PATH`) in a `CMakeUserPresets.json`.
 
 - Documentation index: [docs/README.md](docs/README.md)
 - Software design: [docs/SDD.md](docs/SDD.md)

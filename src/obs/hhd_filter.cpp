@@ -29,9 +29,11 @@ struct hhd_filter {
     std::atomic<bool> rendered{false};  // one capture per video tick (SDD 10.2)
 
     // Sink lifecycle runs on the video tick; submit runs on the graphics
-    // thread. sink_mu covers both the pointer and submit.
+    // thread. sink_mu covers both the pointer and submit. sink_active tracks
+    // the OBS enable state so a disabled filter releases its priority slot.
     std::mutex sink_mu;
     hhd::Sink* sink = nullptr;
+    std::atomic<bool> sink_active{false};
 
     // Graphics-thread resources, sized (gw, gh).
     gs_texrender_t* tex = nullptr;
@@ -155,6 +157,25 @@ void filter_tick(void* data, float) {
     auto* f = static_cast<hhd_filter*>(data);
     f->rendered.store(false);
 
+    // After the shutdown event no new sink may start; the registry already
+    // stopped every live one.
+    if (hhd_shutting_down()) return;
+
+    // The OBS enable checkbox is the on/off switch for this instance: when it
+    // is cleared, stop the sink and release the HyperHDR priority slot.
+    if (!obs_source_enabled(f->source)) {
+        if (f->sink_active.exchange(false)) {
+            hhd_registry_remove(f);
+            filter_stop_sink(f);
+            blog(LOG_INFO, "[hyperhdr] filter '%s' disabled, sink stopped",
+                 obs_source_get_name(f->source));
+        }
+        return;
+    }
+    // A filter that was disabled or has no sink yet needs a fresh start even
+    // when its settings did not change.
+    if (!f->sink_active.load()) f->restart_needed.store(true);
+
     if (!f->restart_needed.exchange(false)) return;
 
     hhd::SinkConfig cfg;
@@ -177,6 +198,7 @@ void filter_tick(void* data, float) {
     hhd_registry_entry entry = {f, cfg.priority, filter_stop_sink, filter_remove_render};
     hhd_registry_add(entry);
     hhd_registry_warn_duplicate(f, cfg.priority, cfg.origin.c_str());
+    f->sink_active.store(true);
     blog(LOG_INFO, "[hyperhdr] filter '%s' streaming: %dx%d max %.0f fps, priority %d",
          cfg.origin.c_str(), cfg.width, cfg.height, cfg.maxFps, cfg.priority);
 }

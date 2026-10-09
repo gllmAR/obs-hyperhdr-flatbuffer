@@ -6,8 +6,10 @@
 
 class QCheckBox;
 class QDoubleSpinBox;
+class QHideEvent;
 class QLabel;
 class QLineEdit;
+class QShowEvent;
 class QSpinBox;
 class QTimer;
 
@@ -22,6 +24,11 @@ public:
 
     // Reloads widgets from the current settings. Call each time the dialog opens.
     void loadFromSettings();
+
+protected:
+    // The status poll only runs while the dialog is visible.
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private slots:
     void apply();

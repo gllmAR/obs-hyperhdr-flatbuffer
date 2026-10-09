@@ -83,6 +83,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
+	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 	hhd_registry_shutdown();
 	hhd_main_output_release();
 	blog(LOG_INFO, "[obs-hyperhdr] unloaded");

@@ -14,10 +14,12 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHideEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -116,7 +118,17 @@ MainOutputDialog::MainOutputDialog(QWidget* parent)
     statusTimer_ = new QTimer(this);
     statusTimer_->setInterval(500);
     connect(statusTimer_, &QTimer::timeout, this, &MainOutputDialog::refreshStatus);
+}
+
+void MainOutputDialog::showEvent(QShowEvent* event) {
+    QDialog::showEvent(event);
+    refreshStatus();
     statusTimer_->start();
+}
+
+void MainOutputDialog::hideEvent(QHideEvent* event) {
+    statusTimer_->stop();
+    QDialog::hideEvent(event);
 }
 
 void MainOutputDialog::loadFromSettings() {

@@ -15,7 +15,9 @@ namespace {
 
 constexpr int kBackoffStartMs = 250;
 constexpr int kBackoffCapMs = 2000;
-// Worst-case stop: one in-flight operation + teardown connect + Clear = 300 + 100 + 100 ms.
+// Worst-case stop: one in-flight connect or write (300 ms), plus the bounded
+// teardown reconnect and Clear (100 ms each) when the link is down. Register is
+// skipped when a stop arrives during connect, so the bound stays near 500 ms.
 constexpr int kConnectTimeoutMs = 300;
 constexpr int kWriteTimeoutMs = 300;
 constexpr int kStopConnectTimeoutMs = 100;
@@ -124,6 +126,14 @@ bool Sink::openConnection(int timeoutMs) {
 bool Sink::connectAndRegister() {
     state_.store(SinkState::Connecting);
     if (!openConnection(kConnectTimeoutMs)) return false;
+
+    // A stop that arrives while connecting needs no Clear for this attempt:
+    // the link is closed before Register, and a previous registration is
+    // released by the teardown Clear in run(). This keeps stop() bounded.
+    if (stopRequested()) {
+        conn_.close();
+        return false;
+    }
 
     // HyperHDR does not release a slot on disconnect, so Register on every connect.
     if (!encodeRegister(frame_, cfg_.origin, cfg_.priority)) {

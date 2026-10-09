@@ -6,3 +6,7 @@ stage/
 dist/
 obs-studio/
 obs-deps/
+
+# Python bytecode
+__pycache__/
+*.pyc

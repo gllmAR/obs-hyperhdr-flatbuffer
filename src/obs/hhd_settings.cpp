@@ -61,6 +61,16 @@ void hhd_settings_load() {
 
     obs_data_t* main = obs_data_get_obj(data, "main_output");
     if (main) {
+        // Defaults for every key: a partial or hand-edited file must not turn
+        // missing values into 0 (priority 0 would outrank every other source).
+        obs_data_set_default_bool(main, "enabled", false);
+        obs_data_set_default_string(main, "origin", "OBS Program");
+        obs_data_set_default_int(main, "priority", 150);
+        obs_data_set_default_int(main, "width", 64);
+        obs_data_set_default_int(main, "height", 36);
+        obs_data_set_default_double(main, "max_fps", 30.0);
+        obs_data_set_default_bool(main, "flip_vertical", false);
+
         hhd_main_settings& ms = g_settings.main;
         ms.enabled = obs_data_get_bool(main, "enabled");
         ms.origin = obs_data_get_string(main, "origin");

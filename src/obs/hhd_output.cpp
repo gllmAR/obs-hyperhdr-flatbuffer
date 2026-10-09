@@ -42,6 +42,9 @@ void* out_create(obs_data_t*, obs_output_t* output) {
 
 void out_destroy(void* data) {
     auto* o = static_cast<hhd_output*>(data);
+    // The output can be destroyed without stop() (for example when start
+    // fails after the registry entry exists), so unregister here as well.
+    hhd_registry_remove(o);
     out_stop_sink(o);
     if (g_output_data == o) g_output_data = nullptr;
     delete o;
@@ -79,6 +82,8 @@ bool out_start(void* data) {
     conv.colorspace = VIDEO_CS_DEFAULT;
     obs_output_set_video_conversion(o->output, &conv);
 
+    // The sink and the registry entry are created together and torn down by
+    // out_stop or out_destroy, so the registry only ever holds a live sink.
     hhd_registry_entry entry = {o, ms.priority, out_stop_sink, nullptr};
     hhd_registry_add(entry);
     hhd_registry_warn_duplicate(o, ms.priority, "main output");
