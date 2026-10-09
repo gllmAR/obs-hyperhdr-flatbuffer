@@ -19,6 +19,7 @@ env:
   # Keep in lockstep with the OBS version the plugin is tested against.
   OBS_TAG: "32.2.2"
   OBS_DEPS_DATE: "2026-07-15"
+  XCODE_APP: "Xcode_26.5"
 
 jobs:
   linux:
@@ -114,30 +115,32 @@ jobs:
       - name: Clone OBS Studio
         run: git clone --depth=1 --branch "$OBS_TAG" --recurse-submodules https://github.com/obsproject/obs-studio.git obs-studio
 
-      - name: Select Command Line Tools SDK
+      - name: Select Xcode ${{ env.XCODE_APP }}
         run: |
-          sudo xcode-select --switch /Library/Developer/CommandLineTools
-          sdk=$(xcrun --show-sdk-version)
+          # OBS 32.2.2 requires the Xcode generator, which needs xcodebuild from full Xcode.
+          sudo xcode-select --switch "/Applications/${XCODE_APP}.app/Contents/Developer"
+          sdk=$(xcrun --sdk macosx --show-sdk-platform-version)
           echo "macOS SDK ${sdk}"
           if [[ "$(printf '%s\n26.5\n' "$sdk" | sort -V | head -1)" != "26.5" ]]; then
             echo "OBS ${OBS_TAG} requires the macOS 26.5 SDK or newer"
             exit 1
           fi
+          xcodebuild -version
 
       - name: Build libobs
         run: |
-          cmake -S obs-studio -B obs-studio/build -DCMAKE_BUILD_TYPE=Release \
+          cmake -S obs-studio -B obs-studio/build -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
             -DCMAKE_PREFIX_PATH="$PWD/obs-deps" \
             -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
             -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF \
             -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
-          cmake --build obs-studio/build --target libobs --parallel
+          cmake --build obs-studio/build --config Release --target libobs --parallel
 
       - name: Configure plugin
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+          cmake -S . -B build -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
             -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs" \
@@ -147,14 +150,14 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Check exported entry point
-        run: nm -gU "build/obs-hyperhdr.plugin/Contents/MacOS/obs-hyperhdr" | grep -q 'obs_module_load$'
+        run: nm -gU "build/Release/obs-hyperhdr.plugin/Contents/MacOS/obs-hyperhdr" | grep -q 'obs_module_load$'
 
       - name: Package
         run: |
           mkdir -p stage dist
           cmake --install build --config Release --prefix stage
           ditto -c -k --keepParent stage/obs-hyperhdr.plugin dist/obs-hyperhdr-macos-universal.zip
-          dsymutil "build/obs-hyperhdr.plugin/Contents/MacOS/obs-hyperhdr" -o dist/obs-hyperhdr-macos-universal.dSYM
+          dsymutil "build/Release/obs-hyperhdr.plugin/Contents/MacOS/obs-hyperhdr" -o dist/obs-hyperhdr-macos-universal.dSYM
           ditto -c -k --keepParent dist/obs-hyperhdr-macos-universal.dSYM dist/obs-hyperhdr-macos-universal-dSYM.zip
           rm -rf dist/obs-hyperhdr-macos-universal.dSYM
 
