@@ -47,6 +47,32 @@ std::string socketErrorText(int code) {
 SOCKET asSocket(NativeSocket fd) { return static_cast<SOCKET>(fd); }
 NativeSocket fromSocket(SOCKET s) { return static_cast<NativeSocket>(s); }
 
+// Waits up to timeoutMs for a non-blocking connect to finish. Winsock ignores
+// SO_SNDTIMEO for connect(), so the bound has to be enforced here. Returns an
+// empty string on success, otherwise the failure text.
+std::string awaitConnect(SOCKET s, int timeoutMs) {
+    fd_set wf;
+    fd_set ef;
+    FD_ZERO(&wf);
+    FD_ZERO(&ef);
+    FD_SET(s, &wf);
+    FD_SET(s, &ef);  // Windows reports a failed non-blocking connect as an exception.
+    timeval tv;
+    tv.tv_sec = static_cast<long>(timeoutMs / 1000);
+    tv.tv_usec = static_cast<long>((timeoutMs % 1000) * 1000);
+
+    const int ready = ::select(0, nullptr, &wf, &ef, &tv);
+    if (ready == 0) return "connect timed out";
+    if (ready < 0) return "select: " + socketErrorText(WSAGetLastError());
+
+    int soError = 0;
+    int len = static_cast<int>(sizeof(soError));
+    if (::getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soError), &len) != 0) {
+        return "getsockopt: " + socketErrorText(WSAGetLastError());
+    }
+    return soError == 0 ? std::string() : socketErrorText(soError);
+}
+
 }  // namespace
 
 Connection::~Connection() { close(); }
@@ -97,13 +123,29 @@ bool Connection::openTcp(const std::string& host, int port, int timeoutMs) {
             continue;
         }
 
-        // Winsock applies SO_SNDTIMEO to sends only; loopback refusals return at once.
+        // Non-blocking connect, bounded by awaitConnect. A blocking connect to an
+        // unresponsive peer can otherwise hold the sink far past its timeout.
+        u_long nonBlocking = 1;
+        if (::ioctlsocket(s, FIONBIO, &nonBlocking) != 0) {
+            lastError_ = "ioctlsocket: " + socketErrorText(WSAGetLastError());
+            ::closesocket(s);
+            s = INVALID_SOCKET;
+            continue;
+        }
+
+        // SO_SNDTIMEO bounds later sends (writeAll enforces its own deadline too).
         const DWORD ms = static_cast<DWORD>(timeoutMs);
         ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&ms), sizeof(ms));
 
-        if (::connect(s, ai->ai_addr, static_cast<int>(ai->ai_addrlen)) == 0) break;
-        lastError_ = "connect " + host + ":" + service + ": " +
-                     socketErrorText(WSAGetLastError());
+        std::string failure;
+        if (::connect(s, ai->ai_addr, static_cast<int>(ai->ai_addrlen)) != 0) {
+            const int err = WSAGetLastError();
+            failure = (err == WSAEWOULDBLOCK || err == WSAEINPROGRESS)
+                          ? awaitConnect(s, timeoutMs)
+                          : socketErrorText(err);
+        }
+        if (failure.empty()) break;
+        lastError_ = "connect " + host + ":" + service + ": " + failure;
         ::closesocket(s);
         s = INVALID_SOCKET;
     }
