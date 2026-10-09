@@ -91,7 +91,7 @@ jobs:
 
   macos:
     name: macos (universal)
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -113,23 +113,34 @@ jobs:
       - name: Clone OBS Studio
         run: git clone --depth=1 --branch "$OBS_TAG" --recurse-submodules https://github.com/obsproject/obs-studio.git obs-studio
 
+      - name: Select Command Line Tools SDK
+        run: |
+          sudo xcode-select --switch /Library/Developer/CommandLineTools
+          sdk=$(xcrun --show-sdk-version)
+          echo "macOS SDK ${sdk}"
+          if [[ "$(printf '%s\n26.5\n' "$sdk" | sort -V | head -1)" != "26.5" ]]; then
+            echo "OBS ${OBS_TAG} requires the macOS 26.5 SDK or newer"
+            exit 1
+          fi
+
       - name: Build libobs
         run: |
-          cmake -S obs-studio -B obs-studio/build -G Xcode \
+          cmake -S obs-studio -B obs-studio/build -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
             -DCMAKE_PREFIX_PATH="$PWD/obs-deps" \
             -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
             -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF \
             -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
-          cmake --build obs-studio/build --config Release --target libobs
+          cmake --build obs-studio/build --target libobs --parallel
 
       - name: Configure plugin
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs"
+            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs" \
+            -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
 
       - name: Build
         run: cmake --build build --config Release
@@ -181,12 +192,15 @@ jobs:
             -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF `
             -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF `
             -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
-          cmake --build obs-studio/build --config RelWithDebInfo --target libobs
+          cmake --build obs-studio/build --config RelWithDebInfo --target libobs w32-pthreads
 
       - name: Configure plugin
         run: |
+          # w32-pthreads config exists only in the libobs build tree.
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-deps"
+            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-deps" `
+            -Dw32-pthreads_DIR="$PWD/obs-studio/build/deps/w32-pthreads" `
+            -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
 
       - name: Build
         run: cmake --build build --config RelWithDebInfo
