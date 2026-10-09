@@ -1,1 +1,8 @@
 inspiration/
+
+# Local build outputs
+build/
+stage/
+dist/
+obs-studio/
+obs-deps/

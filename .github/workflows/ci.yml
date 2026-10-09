@@ -1,0 +1,258 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Keep in lockstep with the OBS version the plugin is tested against.
+  OBS_TAG: "32.2.2"
+  OBS_DEPS_DATE: "2026-07-15"
+
+jobs:
+  linux:
+    name: linux (x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git ca-certificates \
+            extra-cmake-modules uthash-dev libsimde-dev libdrm-dev libgbm-dev \
+            libavcodec-dev libavdevice-dev libavfilter-dev libavformat-dev libavutil-dev \
+            libswresample-dev libswscale-dev libcurl4-openssl-dev libfontconfig-dev \
+            libjansson-dev libmbedtls-dev libpci-dev libspeexdsp-dev libudev-dev \
+            libv4l-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcb-shm0-dev \
+            libxcb-xinerama0-dev libxcb-randr0-dev libxcb-composite0-dev \
+            libxcb-xfixes0-dev libxcb-keysyms1-dev libxcb-util-dev libxcb-icccm4-dev \
+            libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev libxcomposite-dev \
+            libxinerama-dev libxrandr-dev libgl-dev libegl-dev libopengl-dev \
+            libsrt-openssl-dev libx264-dev libpulse-dev libasound2-dev libxss-dev \
+            libwayland-dev
+
+      - name: Cache OBS Studio source and build
+        id: obs-cache
+        uses: actions/cache@v4
+        with:
+          path: obs-studio
+          key: obs-studio-${{ env.OBS_TAG }}-linux-x86_64-v1
+
+      - name: Clone OBS Studio
+        if: steps.obs-cache.outputs.cache-hit != 'true'
+        run: git clone --depth=1 --branch "$OBS_TAG" --recurse-submodules https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Build libobs
+        if: steps.obs-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S obs-studio -B obs-studio/build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
+            -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF \
+            -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF \
+            -DENABLE_PIPEWIRE=OFF -DENABLE_WAYLAND=OFF -DENABLE_RTMP_SERVICES=OFF \
+            -DENABLE_TESTS=OFF
+          cmake --build obs-studio/build --target libobs
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -Dlibobs_DIR="$PWD/obs-studio/build/libobs" \
+            -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Check exported entry point
+        run: nm -D --defined-only build/obs-hyperhdr.so | grep -q ' obs_module_load$'
+
+      - name: Package
+        run: |
+          mkdir -p stage dist
+          cmake --install build --prefix stage
+          tar -C stage -czf dist/obs-hyperhdr-linux-x86_64.tar.gz obs-hyperhdr
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obs-hyperhdr-linux
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macos (universal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache obs-deps
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: obs-deps
+          key: obs-deps-${{ env.OBS_DEPS_DATE }}-macos-universal
+
+      - name: Download obs-deps
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p obs-deps
+          curl -L --fail -o macos-deps.tar.xz \
+            "https://github.com/obsproject/obs-deps/releases/download/${OBS_DEPS_DATE}/macos-deps-${OBS_DEPS_DATE}-universal.tar.xz"
+          tar -xJf macos-deps.tar.xz -C obs-deps
+
+      - name: Clone OBS Studio
+        run: git clone --depth=1 --branch "$OBS_TAG" --recurse-submodules https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Build libobs
+        run: |
+          cmake -S obs-studio -B obs-studio/build -G Xcode \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_PREFIX_PATH="$PWD/obs-deps" \
+            -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
+            -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF \
+            -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
+          cmake --build obs-studio/build --config Release --target libobs
+
+      - name: Configure plugin
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Check exported entry point
+        run: nm -gU "build/obs-hyperhdr.plugin/Contents/MacOS/obs-hyperhdr" | grep -q 'obs_module_load$'
+
+      - name: Package
+        run: |
+          mkdir -p stage dist
+          cmake --install build --config Release --prefix stage
+          ditto -c -k --keepParent stage/obs-hyperhdr.plugin dist/obs-hyperhdr-macos-universal.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obs-hyperhdr-macos
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: windows (x64)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache obs-deps
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: obs-deps
+          key: obs-deps-${{ env.OBS_DEPS_DATE }}-windows-x64
+
+      - name: Download obs-deps
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          curl.exe -L --fail -o windows-deps.zip "https://github.com/obsproject/obs-deps/releases/download/$env:OBS_DEPS_DATE/windows-deps-$env:OBS_DEPS_DATE-x64.zip"
+          Expand-Archive -Path windows-deps.zip -DestinationPath obs-deps
+
+      - name: Clone OBS Studio
+        run: git clone --depth=1 --branch $env:OBS_TAG --recurse-submodules https://github.com/obsproject/obs-studio.git obs-studio
+
+      - name: Build libobs
+        run: |
+          cmake -S obs-studio -B obs-studio/build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$PWD/obs-deps" `
+            -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF `
+            -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF `
+            -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
+          cmake --build obs-studio/build --config RelWithDebInfo --target libobs
+
+      - name: Configure plugin
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-deps"
+
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo
+
+      - name: Check exported entry point
+        run: |
+          if (-not (Select-String -Path "build/RelWithDebInfo/obs-hyperhdr.dll" -Pattern "obs_module_load" -SimpleMatch -Quiet)) {
+            Write-Error "obs_module_load not found in obs-hyperhdr.dll"
+            exit 1
+          }
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Force -Path stage, dist | Out-Null
+          cmake --install build --config RelWithDebInfo --prefix stage
+          Compress-Archive -Path stage/obs-hyperhdr -DestinationPath dist/obs-hyperhdr-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obs-hyperhdr-windows
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: update dev prerelease
+    needs: [linux, macos, windows]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Move the dev tag and publish
+        run: |
+          set -euo pipefail
+
+          cat > notes.md <<'EOF'
+          Rolling development build from `main`. Replaced on every push to `main`.
+
+          Install:
+          - Linux: extract `obs-hyperhdr-linux-x86_64.tar.gz` into `~/.config/obs-studio/plugins/`
+          - Windows: extract `obs-hyperhdr-windows-x64.zip` into `%APPDATA%\obs-studio\plugins\`
+          - macOS: unzip `obs-hyperhdr-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
+
+          ```
+          xattr -dr com.apple.quarantine "$HOME/Library/Application Support/obs-studio/plugins/obs-hyperhdr.plugin"
+          ```
+          EOF
+          echo "Commit: ${GITHUB_SHA}" >> notes.md
+
+          git tag -f dev "$GITHUB_SHA"
+          git push -f origin refs/tags/dev
+
+          if gh release view dev >/dev/null 2>&1; then
+            gh release edit dev --title "obs-hyperhdr dev (rolling)" --notes-file notes.md
+          else
+            gh release create dev --prerelease --title "obs-hyperhdr dev (rolling)" --notes-file notes.md
+          fi
+
+          gh release upload dev dist/* --clobber
