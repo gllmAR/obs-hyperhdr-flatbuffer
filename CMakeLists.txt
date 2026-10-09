@@ -69,13 +69,58 @@ endif()
 # libobs comes from the system (Linux) or from an OBS source build whose
 # build tree is passed through CMAKE_PREFIX_PATH (macOS, Windows).
 find_package(libobs CONFIG REQUIRED)
+find_package(obs-frontend-api CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+
+# The Tools dialog (SDD D-7) needs Qt6 Widgets. When Qt is absent the plugin
+# falls back to a plain Tools-menu toggle.
+option(HYPERHDR_QT_UI "Build the Qt Tools dialog for the main output" ON)
+if(HYPERHDR_QT_UI)
+  find_package(Qt6 CONFIG QUIET COMPONENTS Core Widgets)
+  if(NOT Qt6_FOUND)
+    message(WARNING "Qt6 Widgets not found: Tools dialog disabled, menu toggle fallback used")
+    set(HYPERHDR_QT_UI OFF)
+  endif()
+endif()
+
+# AppleClang 21+ makes implicit-function-declaration a hard error, and Qt6's
+# qyieldcpu.h trips it on arm64. Downgrade just that diagnostic for C++.
+if(APPLE)
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=implicit-function-declaration>")
+endif()
+
+# One transport implementation per platform: POSIX sockets or Winsock.
+if(WIN32)
+  set(HHD_TRANSPORT_SRC src/core/hhd_transport_win.cpp)
+else()
+  set(HHD_TRANSPORT_SRC src/core/hhd_transport.cpp)
+endif()
 
 add_library(${PROJECT_NAME} MODULE
-  src/obs/plugin-main.c)
+  src/obs/plugin-main.cpp
+  src/obs/hhd_settings.cpp
+  src/obs/hhd_registry.cpp
+  src/obs/hhd_output.cpp
+  src/obs/hhd_filter.cpp
+  src/core/hhd_encoder.cpp
+  src/core/hhd_sink.cpp
+  ${HHD_TRANSPORT_SRC})
+
+target_include_directories(${PROJECT_NAME} PRIVATE src/core src/obs)
+target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
+
+if(HYPERHDR_QT_UI)
+  target_sources(${PROJECT_NAME} PRIVATE src/ui/hhd-dialog.cpp src/ui/hhd-dialog.h)
+  target_include_directories(${PROJECT_NAME} PRIVATE src/ui)
+  target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE HYPERHDR_QT_UI=1)
+  set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
   PREFIX ""
-  C_VISIBILITY_PRESET hidden)
+  C_VISIBILITY_PRESET hidden
+  CXX_VISIBILITY_PRESET hidden)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
   HYPERHDR_VERSION="${PROJECT_VERSION}"
@@ -86,10 +131,17 @@ if(APPLE)
   # build-tree framework would hard-code its path into the plugin, so only the
   # headers are taken from the target and the symbols are resolved lazily.
   get_target_property(_hyperhdr_obs_includes OBS::libobs INTERFACE_INCLUDE_DIRECTORIES)
-  target_include_directories(${PROJECT_NAME} PRIVATE ${_hyperhdr_obs_includes})
+  get_target_property(_hyperhdr_frontend_includes OBS::obs-frontend-api INTERFACE_INCLUDE_DIRECTORIES)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${_hyperhdr_obs_includes} ${_hyperhdr_frontend_includes})
   # libobs headers include simde/, which is not in its exported include list.
-  target_link_libraries(${PROJECT_NAME} PRIVATE SIMDe::SIMDe)
+  # OBS 32 exports SIMDe::SIMDe for it; older trees vendor simde inside
+  # libobs/util with relative includes and need no extra target.
+  if(TARGET SIMDe::SIMDe)
+    target_link_libraries(${PROJECT_NAME} PRIVATE SIMDe::SIMDe)
+  endif()
   target_link_options(${PROJECT_NAME} PRIVATE -undefined dynamic_lookup)
+  # Qt is taken from the host OBS process at runtime (its rpath covers
+  # @rpath/Qt*.framework); no Qt is bundled.
 
   set_target_properties(${PROJECT_NAME} PROPERTIES
     BUNDLE TRUE
@@ -97,8 +149,17 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME "${PROJECT_NAME}"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+
+  # Module data (locale) goes into Contents/Resources in the bundle.
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources")
 else()
-  target_link_libraries(${PROJECT_NAME} PRIVATE OBS::libobs)
+  target_link_libraries(${PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-frontend-api)
+  if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+  endif()
 endif()
 
 # Package layout:
@@ -106,8 +167,10 @@ endif()
 #   Linux/Windows:  obs-hyperhdr/bin/64bit/<lib>  -> <plugins>/
 if(APPLE)
   install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION . BUNDLE DESTINATION .)
+  install(DIRECTORY data/ DESTINATION ${PROJECT_NAME}.plugin/Contents/Resources)
 else()
   install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION ${PROJECT_NAME}/bin/64bit
     RUNTIME DESTINATION ${PROJECT_NAME}/bin/64bit)
+  install(DIRECTORY data/ DESTINATION ${PROJECT_NAME}/data)
 endif()

@@ -2,7 +2,12 @@
 
 OBS Studio plugin that sends video to HyperHDR as RGB frames over the HyperHDR FlatBuffers protocol. It provides a main output (program canvas) and a per-source filter on one shared core.
 
-Status: skeleton. Built against libobs 32.2.2 and verified to load on Linux; macOS and Windows CI builds are not yet verified. No video output yet.
+Status: main output and filter implemented. Live-tested on macOS against a mock HyperHDR server: Register/Image/Clear framing, throttling, reconnect with backoff, duplicate-priority warning, and Clear on stop/exit all verified. Not yet tested against a real HyperHDR with LEDs. Linux and Windows builds not yet verified.
+
+## Use
+
+- **Main output (program canvas):** Tools → HyperHDR opens the dialog. The enable checkbox and all parameters (origin, priority, size, max FPS, flip, endpoint) persist in `hyperhdr.json` in the module config folder. The dialog shows the live sink state and last error. Apply restarts a running output.
+- **Filter (one source):** add the "HyperHDR (FlatBuffer)" filter to any source or scene. Origin, priority, size, max FPS, flip and keep-aspect are set per instance in the filter properties. The capture also runs when the source is not on the active scene.
 
 ## Install (dev build)
 

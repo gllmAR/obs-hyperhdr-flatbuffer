@@ -7,10 +7,12 @@
 #include "hhd_transport.h"
 #include "test_net.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef _WIN32
@@ -30,6 +32,18 @@ int failures = 0;
             ++failures;                                                \
         }                                                              \
     } while (0)
+
+// A peer close is only visible to the non-blocking drain once the kernel has
+// processed the FIN, which is asynchronous. Poll briefly instead of assuming
+// a single drain sees it.
+void waitPeerClosed(hhd::Connection& conn) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+    while (conn.isOpen() && std::chrono::steady_clock::now() < deadline) {
+        conn.drain();
+        if (conn.isOpen()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+}
 
 std::string toHex(const std::vector<uint8_t>& bytes) {
     static const char digits[] = "0123456789abcdef";
@@ -128,9 +142,9 @@ void testUnixRoundTrip() {
     CHECK(got == frame.size());
     CHECK(received == frame);
 
-    // Peer closes: the next drain must notice and mark the connection closed.
+    // Peer closes: drain must notice and mark the connection closed.
     ::close(peer);
-    conn.drain();
+    waitPeerClosed(conn);
     CHECK(!conn.isOpen());
 
     conn.close();
@@ -160,9 +174,9 @@ void testTcpRoundTrip() {
     CHECK(testnet::recvExact(peer, received.data(), received.size()) == frame.size());
     CHECK(received == frame);
 
-    // Peer closes: the next drain must notice and mark the connection closed.
+    // Peer closes: drain must notice and mark the connection closed.
     testnet::closeSocket(peer);
-    conn.drain();
+    waitPeerClosed(conn);
     CHECK(!conn.isOpen());
 
     conn.close();
