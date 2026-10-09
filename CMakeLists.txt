@@ -52,6 +52,8 @@ if(APPLE)
   # headers are taken from the target and the symbols are resolved lazily.
   get_target_property(_hyperhdr_obs_includes OBS::libobs INTERFACE_INCLUDE_DIRECTORIES)
   target_include_directories(${PROJECT_NAME} PRIVATE ${_hyperhdr_obs_includes})
+  # libobs headers include simde/, which is not in its exported include list.
+  target_link_libraries(${PROJECT_NAME} PRIVATE SIMDe::SIMDe)
   target_link_options(${PROJECT_NAME} PRIVATE -undefined dynamic_lookup)
 
   set_target_properties(${PROJECT_NAME} PROPERTIES
