@@ -13,15 +13,20 @@ Status: main output and filter implemented. Live-tested on macOS against a mock 
 
 Every push to `main` replaces the rolling [dev release](https://github.com/gllmAR/obs-hyperhdr-flatbuffer/releases/tag/dev).
 
+- Windows: run `obs-hyperhdr-windows-x64-setup.exe`. It asks for administrator rights and installs to `%ProgramData%\obs-studio\plugins\obs-hyperhdr\`, the folder OBS scans on Windows.
+- macOS: open `obs-hyperhdr-macos-universal.pkg`. It installs into `~/Library/Application Support/obs-studio/plugins/` for the logged-in user.
 - Linux: extract `obs-hyperhdr-linux-x86_64.tar.gz` into `~/.config/obs-studio/plugins/`
-- Windows: extract `obs-hyperhdr-windows-x64.zip` into `%APPDATA%\obs-studio\plugins\`
+
+Manual alternatives:
+
+- Windows: extract `obs-hyperhdr-windows-x64.zip` into `%ProgramData%\obs-studio\plugins\`
 - macOS: unzip `obs-hyperhdr-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
 
 ```
 xattr -dr com.apple.quarantine "$HOME/Library/Application Support/obs-studio/plugins/obs-hyperhdr.plugin"
 ```
 
-The dev builds are unsigned.
+The dev builds are unsigned. On macOS, Control-click the `.pkg` and choose Open the first time. Gatekeeper blocks a plain double-click.
 
 ## Develop
 

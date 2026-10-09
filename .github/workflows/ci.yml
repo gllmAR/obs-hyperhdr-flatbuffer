@@ -237,6 +237,9 @@ jobs:
           ditto -c -k --keepParent dist/obs-hyperhdr-macos-universal.dSYM dist/obs-hyperhdr-macos-universal-dSYM.zip
           rm -rf dist/obs-hyperhdr-macos-universal.dSYM
 
+      - name: Build installer
+        run: installer/macos/build-pkg.sh stage dist/obs-hyperhdr-macos-universal.pkg
+
       - uses: actions/upload-artifact@v4
         with:
           name: obs-hyperhdr-macos
@@ -303,6 +306,17 @@ jobs:
           Compress-Archive -Path stage/obs-hyperhdr -DestinationPath dist/obs-hyperhdr-windows-x64.zip
           Compress-Archive -Path build/RelWithDebInfo/obs-hyperhdr.pdb -DestinationPath dist/obs-hyperhdr-windows-x64-pdb.zip
 
+      - name: Build installer
+        run: |
+          # Inno Setup is not guaranteed on the runner image, so install it on demand.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          $ver = [regex]::Match((Get-Content CMakeLists.txt -Raw), 'project\(obs-hyperhdr VERSION ([0-9.]+)').Groups[1].Value
+          & $iscc "/DAppVersion=$ver" installer/windows/obs-hyperhdr.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - uses: actions/upload-artifact@v4
         with:
           name: obs-hyperhdr-windows
@@ -342,8 +356,8 @@ jobs:
 
           Install:
           - Linux: extract `obs-hyperhdr-linux-x86_64.tar.gz` into `~/.config/obs-studio/plugins/`
-          - Windows: extract `obs-hyperhdr-windows-x64.zip` into `%APPDATA%\obs-studio\plugins\`
-          - macOS: unzip `obs-hyperhdr-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
+          - Windows: run `obs-hyperhdr-windows-x64-setup.exe` (asks for administrator rights), or extract `obs-hyperhdr-windows-x64.zip` into `%ProgramData%\obs-studio\plugins\`
+          - macOS: run `obs-hyperhdr-macos-universal.pkg` (unsigned: Control-click, then Open), or unzip `obs-hyperhdr-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
 
           ```
           xattr -dr com.apple.quarantine "$HOME/Library/Application Support/obs-studio/plugins/obs-hyperhdr.plugin"
@@ -421,8 +435,8 @@ jobs:
           cat > notes.md <<'EOF'
           Install:
           - Linux: extract `obs-hyperhdr-<version>-linux-x86_64.tar.gz` into `~/.config/obs-studio/plugins/`
-          - Windows: extract `obs-hyperhdr-<version>-windows-x64.zip` into `%APPDATA%\obs-studio\plugins\`
-          - macOS: unzip `obs-hyperhdr-<version>-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
+          - Windows: run `obs-hyperhdr-<version>-windows-x64-setup.exe` (asks for administrator rights), or extract `obs-hyperhdr-<version>-windows-x64.zip` into `%ProgramData%\obs-studio\plugins\`
+          - macOS: run `obs-hyperhdr-<version>-macos-universal.pkg` (unsigned: Control-click, then Open), or unzip `obs-hyperhdr-<version>-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
 
           ```
           xattr -dr com.apple.quarantine "$HOME/Library/Application Support/obs-studio/plugins/obs-hyperhdr.plugin"

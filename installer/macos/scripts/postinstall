@@ -1,0 +1,20 @@
+#!/bin/bash
+# Runs as root after the package payload is written. Moves the plugin into the
+# logged-in user's OBS plugin folder, the only location OBS 32 scans on macOS.
+set -euo pipefail
+
+staged="/Library/Application Support/obs-hyperhdr/obs-hyperhdr.plugin"
+user=$(stat -f%Su /dev/console)
+if [[ -z "$user" || "$user" == "root" ]]; then
+  echo "obs-hyperhdr: no logged-in user to install the plugin for" >&2
+  exit 1
+fi
+
+home=$(dscl . -read "/Users/$user" NFSHomeDirectory | sed 's/^NFSHomeDirectory: //')
+dest="$home/Library/Application Support/obs-studio/plugins"
+
+# Run as the user so the copied files are owned by them.
+sudo -u "$user" mkdir -p "$dest"
+sudo -u "$user" rm -rf "$dest/obs-hyperhdr.plugin"
+sudo -u "$user" ditto "$staged" "$dest/obs-hyperhdr.plugin"
+rm -rf "/Library/Application Support/obs-hyperhdr"
