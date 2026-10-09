@@ -143,7 +143,7 @@ jobs:
           cmake -S . -B build -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs" \
+            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-deps" \
             -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
 
       - name: Build
