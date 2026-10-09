@@ -31,6 +31,19 @@ if(NOT HYPERHDR_BUILD_ID)
   endif()
 endif()
 
+# Core unit tests need no libobs, so this configure stops before the plugin.
+option(HYPERHDR_BUILD_TESTS "Build core unit tests only (no libobs needed)" OFF)
+if(HYPERHDR_BUILD_TESTS)
+  enable_testing()
+  add_executable(hhd_core_tests
+    tests/unit/test_core.cpp
+    src/core/hhd_encoder.cpp
+    src/core/hhd_transport.cpp)
+  target_include_directories(hhd_core_tests PRIVATE src/core)
+  add_test(NAME hhd_core COMMAND hhd_core_tests)
+  return()
+endif()
+
 # libobs comes from the system (Linux) or from an OBS source build whose
 # build tree is passed through CMAKE_PREFIX_PATH (macOS, Windows).
 find_package(libobs CONFIG REQUIRED)
