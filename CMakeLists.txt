@@ -41,6 +41,16 @@ if(HYPERHDR_BUILD_TESTS)
     src/core/hhd_transport.cpp)
   target_include_directories(hhd_core_tests PRIVATE src/core)
   add_test(NAME hhd_core COMMAND hhd_core_tests)
+
+  find_package(Threads REQUIRED)
+  add_executable(hhd_sink_tests
+    tests/unit/test_sink.cpp
+    src/core/hhd_encoder.cpp
+    src/core/hhd_sink.cpp
+    src/core/hhd_transport.cpp)
+  target_include_directories(hhd_sink_tests PRIVATE src/core)
+  target_link_libraries(hhd_sink_tests PRIVATE Threads::Threads)
+  add_test(NAME hhd_sink COMMAND hhd_sink_tests)
   return()
 endif()
 

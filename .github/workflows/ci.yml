@@ -91,6 +91,45 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  core:
+    name: core tests (no libobs)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build util-linux
+
+      - name: Configure core tests
+        run: |
+          cmake -S . -B build-core -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DHYPERHDR_BUILD_TESTS=ON -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+
+      - name: Build core tests
+        run: cmake --build build-core
+
+      - name: Run core tests
+        working-directory: build-core
+        run: ctest --output-on-failure
+
+      - name: Configure core tests with ThreadSanitizer
+        run: |
+          cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DHYPERHDR_BUILD_TESTS=ON \
+            -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror -fsanitize=thread -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+
+      - name: Build and run sink tests under ThreadSanitizer
+        working-directory: build-tsan
+        run: |
+          cmake --build . --target hhd_sink_tests hhd_core_tests
+          # setarch -R disables ASLR, which TSan needs for its shadow memory mapping.
+          setarch "$(uname -m)" -R ./hhd_sink_tests
+          setarch "$(uname -m)" -R ./hhd_core_tests
+
   macos:
     name: macos (universal)
     runs-on: macos-26
@@ -235,7 +274,7 @@ jobs:
 
   release:
     name: update dev prerelease
-    needs: [linux, macos, windows]
+    needs: [core, linux, macos, windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
@@ -282,7 +321,7 @@ jobs:
 
   tag-release:
     name: draft release ${{ github.ref_name }}
-    needs: [linux, macos, windows]
+    needs: [core, linux, macos, windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
