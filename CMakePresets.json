@@ -1,0 +1,64 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "core-base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "HYPERHDR_BUILD_TESTS": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "core-linux",
+      "displayName": "Core tests (Linux, Ninja)",
+      "inherits": "core-base",
+      "generator": "Ninja",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "core-macos",
+      "displayName": "Core tests (macOS, Ninja)",
+      "inherits": "core-base",
+      "generator": "Ninja",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "core-windows",
+      "displayName": "Core tests (Windows, Visual Studio 2022 x64)",
+      "inherits": "core-base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "core-linux", "configurePreset": "core-linux", "configuration": "Debug" },
+    { "name": "core-macos", "configurePreset": "core-macos", "configuration": "Debug" },
+    { "name": "core-windows", "configurePreset": "core-windows", "configuration": "Debug" }
+  ],
+  "testPresets": [
+    {
+      "name": "core-linux",
+      "configurePreset": "core-linux",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "core-macos",
+      "configurePreset": "core-macos",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "core-windows",
+      "configurePreset": "core-windows",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

@@ -11,6 +11,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -22,6 +23,32 @@
 #endif
 
 namespace hhd {
+namespace {
+
+// Waits up to timeoutMs for a non-blocking connect. Empty string on success.
+// BSD and macOS ignore SO_SNDTIMEO for connect(), so the bound is enforced here.
+std::string awaitConnect(int fd, int timeoutMs) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+
+    int ready;
+    do {
+        ready = ::poll(&pfd, 1, timeoutMs);
+    } while (ready < 0 && errno == EINTR);
+    if (ready == 0) return "connect timed out";
+    if (ready < 0) return std::strerror(errno);
+
+    int soError = 0;
+    socklen_t len = sizeof(soError);
+    if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len) != 0) {
+        return std::strerror(errno);
+    }
+    return soError == 0 ? std::string() : std::strerror(soError);
+}
+
+}  // namespace
 
 Connection::~Connection() { close(); }
 
@@ -89,8 +116,15 @@ bool Connection::openTcp(const std::string& host, int port, int timeoutMs) {
         tv.tv_usec = (timeoutMs % 1000) * 1000;
         ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-        if (::connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
-        lastError_ = "connect " + host + ":" + service + ": " + std::strerror(errno);
+        const int flags = ::fcntl(fd, F_GETFL, 0);
+        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        std::string failure;
+        if (::connect(fd, ai->ai_addr, ai->ai_addrlen) != 0) {
+            failure = (errno == EINPROGRESS) ? awaitConnect(fd, timeoutMs)
+                                             : std::strerror(errno);
+        }
+        if (failure.empty()) break;
+        lastError_ = "connect " + host + ":" + service + ": " + failure;
         ::close(fd);
         fd = -1;
     }

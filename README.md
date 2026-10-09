@@ -18,6 +18,16 @@ xattr -dr com.apple.quarantine "$HOME/Library/Application Support/obs-studio/plu
 
 The dev builds are unsigned.
 
+## Develop
+
+The protocol core, sink, and transport need no OBS install. Run their tests with the presets in `CMakePresets.json` (build output goes to `build/<preset>`):
+
+- Linux: `cmake --preset core-linux && cmake --build --preset core-linux && ctest --preset core-linux` (needs Ninja)
+- macOS: `brew install ninja`, then the same three commands with `core-macos`
+- Windows (Visual Studio 2022): `cmake --preset core-windows`, `cmake --build --preset core-windows`, `ctest --preset core-windows`
+
+CI runs the same presets on macOS (`core-macos`) and the equivalent commands on Linux and Windows. The plugin itself needs a libobs build tree; pass its location with `-DCMAKE_PREFIX_PATH` or `libobs_DIR` in a `CMakeUserPresets.json`.
+
 - Documentation index: [docs/README.md](docs/README.md)
 - Software design: [docs/SDD.md](docs/SDD.md)
 - Plan: [docs/PLAN.md](docs/PLAN.md)
