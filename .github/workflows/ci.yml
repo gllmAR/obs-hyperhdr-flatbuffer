@@ -65,12 +65,13 @@ jobs:
             -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF \
             -DENABLE_PIPEWIRE=OFF -DENABLE_WAYLAND=OFF -DENABLE_RTMP_SERVICES=OFF \
             -DENABLE_TESTS=OFF
-          cmake --build obs-studio/build --target libobs
+          cmake --build obs-studio/build --target libobs obs-frontend-api
 
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -Dlibobs_DIR="$PWD/obs-studio/build/libobs" \
+            -Dobs-frontend-api_DIR="$PWD/obs-studio/build/frontend/api" \
             -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
 
       - name: Build
@@ -210,14 +211,14 @@ jobs:
             -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
             -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF \
             -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
-          cmake --build obs-studio/build --config Release --target libobs --parallel
+          cmake --build obs-studio/build --config Release --target libobs obs-frontend-api --parallel
 
       - name: Configure plugin
         run: |
           cmake -S . -B build -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-deps" \
+            -DCMAKE_PREFIX_PATH="$PWD/obs-studio/build/libobs;$PWD/obs-studio/build/frontend/api;$PWD/obs-deps" \
             -DCMAKE_MODULE_PATH="$PWD/obs-studio/cmake/finders"
 
       - name: Build
@@ -273,14 +274,14 @@ jobs:
             -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF `
             -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF -DENABLE_VLC=OFF `
             -DENABLE_AJA=OFF -DENABLE_NDI=OFF -DENABLE_VIRTUALCAM=OFF
-          cmake --build obs-studio/build --config RelWithDebInfo --target libobs w32-pthreads
+          cmake --build obs-studio/build --config RelWithDebInfo --target libobs w32-pthreads obs-frontend-api
 
       - name: Configure plugin
         run: |
           # CMake reads backslashes in -D values as escapes, so pass forward-slash paths.
           $root = (Get-Location).Path -replace '\\', '/'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$root/obs-studio/build/libobs;$root/obs-deps" `
+            -DCMAKE_PREFIX_PATH="$root/obs-studio/build/libobs;$root/obs-studio/build/frontend/api;$root/obs-deps" `
             -Dw32-pthreads_DIR="$root/obs-studio/build/deps/w32-pthreads" `
             -DCMAKE_MODULE_PATH="$root/obs-studio/cmake/finders"
 
