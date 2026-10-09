@@ -50,14 +50,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: obs-studio
-          key: obs-studio-${{ env.OBS_TAG }}-linux-x86_64-v1
+          key: obs-studio-${{ env.OBS_TAG }}-linux-x86_64-v2
 
       - name: Clone OBS Studio
         if: steps.obs-cache.outputs.cache-hit != 'true'
         run: git clone --depth=1 --branch "$OBS_TAG" --recurse-submodules https://github.com/obsproject/obs-studio.git obs-studio
 
-      - name: Build libobs
-        if: steps.obs-cache.outputs.cache-hit != 'true'
+      # Always run (incremental on a cache hit): the cached tree may predate a
+      # newly needed target such as obs-frontend-api, and the plugin links it.
+      - name: Build libobs and obs-frontend-api
         run: |
           cmake -S obs-studio -B obs-studio/build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DENABLE_FRONTEND=OFF -DENABLE_UI=OFF -DENABLE_PLUGINS=OFF \
