@@ -314,6 +314,9 @@ jobs:
     needs: [core, core-windows, core-macos, linux, macos, windows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    concurrency:
+      group: dev-release
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
@@ -326,6 +329,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Write checksums
+        run: (cd dist && sha256sum ./* > SHA256SUMS.txt)
 
       - name: Move the dev tag and publish
         run: |
@@ -356,6 +362,14 @@ jobs:
 
           gh release upload dev dist/* --clobber
 
+          # Remove assets from earlier builds that this run no longer produces.
+          keep=$(cd dist && ls)
+          gh release view dev --json assets --jq '.assets[].name' | while read -r name; do
+            if ! grep -qxF "$name" <<<"$keep"; then
+              gh release delete-asset dev "$name" --yes
+            fi
+          done
+
   tag-release:
     name: draft release ${{ github.ref_name }}
     needs: [core, core-windows, core-macos, linux, macos, windows]
@@ -384,19 +398,51 @@ jobs:
             exit 1
           fi
 
-      - name: Add source tarball and checksums
+      - name: Version asset names and add source tarball
         run: |
           set -euo pipefail
           ver=${GITHUB_REF_NAME#v}
+          (
+            cd dist
+            for f in obs-hyperhdr-*; do
+              mv "$f" "obs-hyperhdr-${ver}-${f#obs-hyperhdr-}"
+            done
+          )
           git archive --format=tar.gz --prefix="obs-hyperhdr-${ver}/" \
             -o "dist/obs-hyperhdr-${ver}-source.tar.gz" "$GITHUB_SHA"
-          cd dist
-          sha256sum ./* > CHECKSUMS.txt
+          (cd dist && sha256sum ./* > SHA256SUMS.txt)
 
-      - name: Create draft release
+      - name: Create or update draft release
         run: |
           set -euo pipefail
           pre=()
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
-            --title "obs-hyperhdr $GITHUB_REF_NAME" --generate-notes "${pre[@]}"
+
+          cat > notes.md <<'EOF'
+          Install:
+          - Linux: extract `obs-hyperhdr-<version>-linux-x86_64.tar.gz` into `~/.config/obs-studio/plugins/`
+          - Windows: extract `obs-hyperhdr-<version>-windows-x64.zip` into `%APPDATA%\obs-studio\plugins\`
+          - macOS: unzip `obs-hyperhdr-<version>-macos-universal.zip` into `~/Library/Application Support/obs-studio/plugins/`, then run:
+
+          ```
+          xattr -dr com.apple.quarantine "$HOME/Library/Application Support/obs-studio/plugins/obs-hyperhdr.plugin"
+          ```
+
+          Verify downloads with `SHA256SUMS.txt`.
+
+          EOF
+          sed -i "s/<version>/${GITHUB_REF_NAME#v}/g" notes.md
+          gh api "repos/${GH_REPO}/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" \
+            --jq .body >> notes.md
+
+          # Draft releases are not returned by tag lookup, so search the release list.
+          existing=$(gh release list --limit 100 --json tagName --jq '.[].tagName')
+          if grep -qxF "$GITHUB_REF_NAME" <<<"$existing"; then
+            gh release edit "$GITHUB_REF_NAME" --title "obs-hyperhdr $GITHUB_REF_NAME" \
+              --notes-file notes.md "${pre[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "obs-hyperhdr $GITHUB_REF_NAME" --notes-file notes.md "${pre[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
