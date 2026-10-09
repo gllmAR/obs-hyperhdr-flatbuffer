@@ -35,11 +35,18 @@ endif()
 option(HYPERHDR_BUILD_TESTS "Build core unit tests only (no libobs needed)" OFF)
 if(HYPERHDR_BUILD_TESTS)
   enable_testing()
+  # One transport implementation per platform: POSIX sockets or Winsock.
+  if(WIN32)
+    set(HHD_TRANSPORT_SRC src/core/hhd_transport_win.cpp)
+  else()
+    set(HHD_TRANSPORT_SRC src/core/hhd_transport.cpp)
+  endif()
+
   add_executable(hhd_core_tests
     tests/unit/test_core.cpp
     src/core/hhd_encoder.cpp
-    src/core/hhd_transport.cpp)
-  target_include_directories(hhd_core_tests PRIVATE src/core)
+    ${HHD_TRANSPORT_SRC})
+  target_include_directories(hhd_core_tests PRIVATE src/core tests/unit)
   add_test(NAME hhd_core COMMAND hhd_core_tests)
 
   find_package(Threads REQUIRED)
@@ -47,10 +54,15 @@ if(HYPERHDR_BUILD_TESTS)
     tests/unit/test_sink.cpp
     src/core/hhd_encoder.cpp
     src/core/hhd_sink.cpp
-    src/core/hhd_transport.cpp)
-  target_include_directories(hhd_sink_tests PRIVATE src/core)
+    ${HHD_TRANSPORT_SRC})
+  target_include_directories(hhd_sink_tests PRIVATE src/core tests/unit)
   target_link_libraries(hhd_sink_tests PRIVATE Threads::Threads)
   add_test(NAME hhd_sink COMMAND hhd_sink_tests)
+
+  if(WIN32)
+    target_link_libraries(hhd_core_tests PRIVATE ws2_32)
+    target_link_libraries(hhd_sink_tests PRIVATE ws2_32)
+  endif()
   return()
 endif()
 

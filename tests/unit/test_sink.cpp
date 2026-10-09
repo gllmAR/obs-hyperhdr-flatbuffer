@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Sink tests against an in-process fake HyperHDR on a Unix domain socket. Frames are
+// Sink tests against an in-process fake HyperHDR on loopback TCP. Frames are
 // compared byte-for-byte with the encoder, which test_core checks against the
 // official flatbuffers builder.
 
 #include "hhd_encoder.h"
 #include "hhd_sink.h"
+#include "test_net.h"
 
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -19,11 +19,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
 
 namespace {
 
@@ -44,10 +39,6 @@ constexpr int kW = 8;
 constexpr int kH = 8;
 constexpr size_t kRgbBytes = kW * kH * 3;
 
-std::string uniquePath(const char* tag) {
-    return "/tmp/hhd-sink-" + std::to_string(::getpid()) + "-" + tag + ".sock";
-}
-
 Frame makeRgb(uint8_t seed) {
     Frame rgb(kRgbBytes);
     for (size_t i = 0; i < rgb.size(); ++i) rgb[i] = static_cast<uint8_t>(i + seed);
@@ -64,50 +55,43 @@ bool waitUntil(const std::function<bool()>& pred, int timeoutMs) {
     return pred();
 }
 
-hhd::SinkConfig makeConfig(const std::string& path) {
+hhd::SinkConfig makeConfig(uint16_t port) {
     hhd::SinkConfig cfg;
     cfg.origin = "obs";
     cfg.priority = 150;
     cfg.width = kW;
     cfg.height = kH;
     cfg.maxFps = 0.0;  // unthrottled unless a test sets it
-    cfg.endpoint.preferDomainSocket = true;
-    cfg.endpoint.domainSocketPath = path;
-    cfg.endpoint.port = 1;  // refused at once; keeps the test off the real TCP port
+    cfg.endpoint.preferDomainSocket = false;  // TCP only: the domain socket is POSIX
+    cfg.endpoint.host = "127.0.0.1";
+    cfg.endpoint.port = port;
     return cfg;
 }
 
-// Accepts connections on a Unix socket and records every complete length-prefixed
-// frame. One thread does accept, read and parse, so no per-client threads are needed.
+// Accepts loopback TCP connections and records every complete length-prefixed frame.
+// One thread does accept, read and parse, so no per-client threads are needed.
 class FakeServer {
 public:
-    explicit FakeServer(std::string path) : path_(std::move(path)) {
-        ::unlink(path_.c_str());
-        listen_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        struct sockaddr_un addr;
-        std::memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        ok_ = listen_ >= 0 && path_.size() < sizeof(addr.sun_path);
-        if (ok_) {
-            std::memcpy(addr.sun_path, path_.c_str(), path_.size());
-            ok_ = ::bind(listen_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0 &&
-                  ::listen(listen_, 4) == 0;
-        }
-        if (listen_ >= 0) ::fcntl(listen_, F_SETFL, ::fcntl(listen_, F_GETFL, 0) | O_NONBLOCK);
+    // Port 0 picks a free port; port() reports the one in use.
+    explicit FakeServer(uint16_t port) {
+        uint16_t bound = port;
+        listen_ = testnet::listenLoopback(bound);
+        port_ = bound;
+        ok_ = listen_ != testnet::kInvalid && testnet::setNonBlocking(listen_);
         thread_ = std::thread([this] { serve(); });
     }
 
     ~FakeServer() {
         running_ = false;
         if (thread_.joinable()) thread_.join();
-        if (listen_ >= 0) ::close(listen_);
-        ::unlink(path_.c_str());
+        testnet::closeSocket(listen_);
     }
 
     FakeServer(const FakeServer&) = delete;
     FakeServer& operator=(const FakeServer&) = delete;
 
     bool ok() const { return ok_; }
+    uint16_t port() const { return port_; }
     int connections() const { return connections_.load(); }
     void dropClients() { dropAll_ = true; }
 
@@ -130,7 +114,7 @@ public:
 
 private:
     struct Client {
-        int fd;
+        testnet::Socket fd;
         Frame buf;
     };
 
@@ -154,36 +138,36 @@ private:
         std::vector<Client> clients;
         while (running_.load()) {
             if (dropAll_.exchange(false)) {
-                for (const Client& c : clients) ::close(c.fd);
+                for (const Client& c : clients) testnet::closeSocket(c.fd);
                 clients.clear();
             }
-            const int fd = ::accept(listen_, nullptr, nullptr);
-            if (fd >= 0) {
-                ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+            const testnet::Socket fd = testnet::acceptOne(listen_);
+            if (fd != testnet::kInvalid) {
+                testnet::setNonBlocking(fd);
                 clients.push_back(Client{fd, Frame()});
                 ++connections_;
             }
             for (size_t i = 0; i < clients.size();) {
                 uint8_t scratch[4096];
-                const ssize_t n = ::recv(clients[i].fd, scratch, sizeof(scratch), 0);
+                const int n = testnet::recvSome(clients[i].fd, scratch, sizeof(scratch));
                 if (n > 0) {
                     clients[i].buf.insert(clients[i].buf.end(), scratch, scratch + n);
                     splitFrames(clients[i].buf);
                     ++i;
-                } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                } else if (n == testnet::kWouldBlock) {
                     ++i;
                 } else {
-                    ::close(clients[i].fd);
+                    testnet::closeSocket(clients[i].fd);
                     clients.erase(clients.begin() + static_cast<std::ptrdiff_t>(i));
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        for (const Client& c : clients) ::close(c.fd);
+        for (const Client& c : clients) testnet::closeSocket(c.fd);
     }
 
-    std::string path_;
-    int listen_ = -1;
+    uint16_t port_ = 0;
+    testnet::Socket listen_ = testnet::kInvalid;
     bool ok_ = false;
     std::atomic<bool> running_{true};
     std::atomic<bool> dropAll_{false};
@@ -194,7 +178,7 @@ private:
 };
 
 void testSubmitRulesAndRestart() {
-    hhd::Sink sink(makeConfig("/tmp/hhd-sink-unused.sock"));
+    hhd::Sink sink(makeConfig(1));
     const Frame rgb = makeRgb(5);
     CHECK(!sink.submit(nullptr, kRgbBytes));
     CHECK(!sink.submit(rgb.data(), kRgbBytes - 1));
@@ -206,19 +190,18 @@ void testSubmitRulesAndRestart() {
 }
 
 void testDefaultDomainSocketPath() {
-    setenv("TMPDIR", "/run/user/1000/", 1);
+    testnet::setEnv("TMPDIR", "/run/user/1000/");
     CHECK(hhd::defaultDomainSocketPath() == "/run/user/1000/hyperhdr-domain");
-    setenv("TMPDIR", "/", 1);
+    testnet::setEnv("TMPDIR", "/");
     CHECK(hhd::defaultDomainSocketPath() == "/hyperhdr-domain");
-    setenv("TMPDIR", "", 1);
+    testnet::setEnv("TMPDIR", "");
     CHECK(hhd::defaultDomainSocketPath() == "/tmp/hyperhdr-domain");
-    unsetenv("TMPDIR");
+    testnet::unsetEnv("TMPDIR");
     CHECK(hhd::defaultDomainSocketPath() == "/tmp/hyperhdr-domain");
 }
 
 void testRegisterImageClear() {
-    const std::string path = uniquePath("basic");
-    FakeServer server(path);
+    FakeServer server(0);
     CHECK(server.ok());
 
     const Frame rgb = makeRgb(1);
@@ -227,7 +210,7 @@ void testRegisterImageClear() {
     CHECK(hhd::encodeImageRgb(img, rgb.data(), rgb.size(), kW, kH));
     CHECK(hhd::encodeClear(clr, 150));
 
-    hhd::Sink sink(makeConfig(path));
+    hhd::Sink sink(makeConfig(server.port()));
     CHECK(sink.submit(rgb.data(), rgb.size()));
     CHECK(sink.start());
     CHECK(waitUntil([&] { return server.frameCount() >= 2; }, 3000));
@@ -245,8 +228,9 @@ void testRegisterImageClear() {
 }
 
 void testBackoffThenConnect() {
-    const std::string path = uniquePath("late");
-    hhd::Sink sink(makeConfig(path));
+    const uint16_t port = testnet::freePort();
+    CHECK(port != 0);
+    hhd::Sink sink(makeConfig(port));
     CHECK(sink.start());
     CHECK(waitUntil([&] { return sink.state() == hhd::SinkState::Backoff; }, 2000));
     CHECK(!sink.lastError().empty());
@@ -255,7 +239,7 @@ void testBackoffThenConnect() {
     CHECK(hhd::encodeRegister(reg, "obs", 150));
     CHECK(hhd::encodeClear(clr, 150));
     {
-        FakeServer server(path);  // HyperHDR appears after the sink started
+        FakeServer server(port);  // HyperHDR appears after the sink started
         CHECK(server.ok());
         CHECK(waitUntil([&] { return server.countEqual(reg) >= 1; }, 3000));
         sink.stop();
@@ -267,15 +251,14 @@ void testBackoffThenConnect() {
 }
 
 void testReRegisterAfterDrop() {
-    const std::string path = uniquePath("drop");
-    FakeServer server(path);
+    FakeServer server(0);
     CHECK(server.ok());
 
     Frame reg, clr;
     CHECK(hhd::encodeRegister(reg, "obs", 150));
     CHECK(hhd::encodeClear(clr, 150));
 
-    hhd::Sink sink(makeConfig(path));
+    hhd::Sink sink(makeConfig(server.port()));
     CHECK(sink.start());
     CHECK(waitUntil([&] { return server.countEqual(reg) >= 1; }, 2000));
 
@@ -298,11 +281,10 @@ void testReRegisterAfterDrop() {
 }
 
 void testThrottle() {
-    const std::string path = uniquePath("throttle");
-    FakeServer server(path);
+    FakeServer server(0);
     CHECK(server.ok());
 
-    hhd::SinkConfig cfg = makeConfig(path);
+    hhd::SinkConfig cfg = makeConfig(server.port());
     cfg.maxFps = 10.0;  // one Image per 100 ms
     const Frame rgb = makeRgb(3);
     Frame img, clr;
@@ -325,11 +307,10 @@ void testThrottle() {
 }
 
 void testFlipVertical() {
-    const std::string path = uniquePath("flip");
-    FakeServer server(path);
+    FakeServer server(0);
     CHECK(server.ok());
 
-    hhd::SinkConfig cfg = makeConfig(path);
+    hhd::SinkConfig cfg = makeConfig(server.port());
     cfg.flipVertical = true;
     const Frame rgb = makeRgb(4);
     const size_t row = static_cast<size_t>(kW) * 3;

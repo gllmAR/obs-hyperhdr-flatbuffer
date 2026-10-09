@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// POSIX socket transport (Unix domain or TCP). The Winsock path is not written yet.
+// Socket transport. POSIX (Unix domain or TCP) is in hhd_transport.cpp; Winsock TCP
+// is in hhd_transport_win.cpp. CMake compiles exactly one of them.
 #pragma once
 
 #include <cstddef>
@@ -7,6 +8,14 @@
 #include <string>
 
 namespace hhd {
+
+#ifdef _WIN32
+using NativeSocket = std::uintptr_t;  // SOCKET
+inline constexpr NativeSocket kInvalidSocket = ~static_cast<NativeSocket>(0);
+#else
+using NativeSocket = int;
+inline constexpr NativeSocket kInvalidSocket = -1;
+#endif
 
 class Connection {
 public:
@@ -18,7 +27,7 @@ public:
     bool openUnix(const std::string& path);
     bool openTcp(const std::string& host, int port, int timeoutMs);
     void close();
-    bool isOpen() const { return fd_ >= 0; }
+    bool isOpen() const { return fd_ != kInvalidSocket; }
 
     // Writes every byte or fails. Fails after timeoutMs of waiting for buffer space.
     bool writeAll(const uint8_t* data, size_t size, int timeoutMs);
@@ -28,9 +37,9 @@ public:
     const std::string& lastError() const { return lastError_; }
 
 private:
-    bool finishOpen(int fd);
+    bool finishOpen(NativeSocket fd);
 
-    int fd_ = -1;
+    NativeSocket fd_ = kInvalidSocket;
     std::string lastError_;
 };
 

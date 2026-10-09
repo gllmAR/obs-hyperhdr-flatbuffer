@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Unit tests for the core encoder, mailbox and POSIX transport. Golden frames
+// Unit tests for the core encoder, mailbox and transport. Golden frames
 // come from tools/verify_flat.py (official flatbuffers builder).
 
 #include "hhd_encoder.h"
 #include "hhd_mailbox.h"
 #include "hhd_transport.h"
+#include "test_net.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,9 +13,10 @@
 #include <string>
 #include <vector>
 
-#include <sys/socket.h>
+#ifndef _WIN32
 #include <sys/un.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -89,6 +91,7 @@ void testMailbox() {
     CHECK(!box.take(got));  // nothing new since the last take
 }
 
+#ifndef _WIN32
 void testUnixRoundTrip() {
     char path[108];
     std::snprintf(path, sizeof(path), "/tmp/hhd-test-%d.sock", static_cast<int>(getpid()));
@@ -134,6 +137,44 @@ void testUnixRoundTrip() {
     ::close(srv);
     ::unlink(path);
 }
+#endif
+
+void testTcpRoundTrip() {
+    uint16_t port = 0;
+    const testnet::Socket srv = testnet::listenLoopback(port);
+    CHECK(srv != testnet::kInvalid);
+    CHECK(port != 0);
+
+    hhd::Connection conn;
+    CHECK(conn.openTcp("127.0.0.1", port, 1000));
+    CHECK(conn.isOpen());
+
+    const testnet::Socket peer = testnet::acceptOne(srv);
+    CHECK(peer != testnet::kInvalid);
+
+    std::vector<uint8_t> frame;
+    CHECK(hhd::encodeClear(frame, 150));
+    CHECK(conn.writeAll(frame.data(), frame.size(), 1000));
+
+    std::vector<uint8_t> received(frame.size());
+    CHECK(testnet::recvExact(peer, received.data(), received.size()) == frame.size());
+    CHECK(received == frame);
+
+    // Peer closes: the next drain must notice and mark the connection closed.
+    testnet::closeSocket(peer);
+    conn.drain();
+    CHECK(!conn.isOpen());
+
+    conn.close();
+    testnet::closeSocket(srv);
+}
+
+void testTcpOpenFailure() {
+    hhd::Connection conn;
+    CHECK(!conn.openTcp("127.0.0.1", testnet::freePort(), 200));
+    CHECK(!conn.isOpen());
+    CHECK(!conn.lastError().empty());
+}
 
 void testUnixOpenFailure() {
     hhd::Connection conn;
@@ -148,7 +189,11 @@ int main() {
     testEncoderGolden();
     testEncoderRejects();
     testMailbox();
+#ifndef _WIN32
     testUnixRoundTrip();
+#endif
+    testTcpRoundTrip();
+    testTcpOpenFailure();
     testUnixOpenFailure();
 
     if (failures != 0) {
